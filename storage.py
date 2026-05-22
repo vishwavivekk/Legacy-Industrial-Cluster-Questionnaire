@@ -6,7 +6,7 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +56,7 @@ def init_db() -> None:
 
 def save_response(payload: dict[str, Any]) -> int:
     init_db()
-    now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
     with get_conn() as conn:
         cur = conn.execute(
             """

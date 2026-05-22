@@ -4,10 +4,6 @@ NICDC Legacy Industrial Cluster Questionnaire — Streamlit app.
 Public page  : multi-section form, validates required fields, submits to SQLite.
 Admin page   : password-gated dashboard to view, filter, download (CSV / XLSX / JSON)
                and delete individual responses.
-
-Run locally  : `streamlit run app.py`
-Deploy       : push to GitHub -> Streamlit Community Cloud -> set admin password
-               in `Secrets` (key: `admin_password`).
 """
 from __future__ import annotations
 
@@ -15,7 +11,7 @@ import base64
 import hashlib
 import io
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -75,41 +71,33 @@ BG_SOFT     = "#F5F7FA"
 BORDER      = "#DCE3EE"
 TEXT_DARK   = "#0E1B2C"
 TEXT_MUTED  = "#5A6B82"
-LETTERHEAD  = "#C25932"   # burnt-orange used in NICDC letterhead wordmark
-LOGO_RED    = "#9A3324"   # burgundy used in NICDC tree-logo lettering
+LETTERHEAD  = "#C25932"
+LOGO_RED    = "#9A3324"
 
 CSS = f"""
 <style>
 :root {{
     --nicdc-navy: {NAVY};
-    --nicdc-navy-soft: {NAVY_SOFT};
     --nicdc-saffron: {SAFFRON};
-    --nicdc-gold: {GOLD};
     --nicdc-bg: {BG_SOFT};
     --nicdc-border: {BORDER};
+    --nicdc-text-dark: {TEXT_DARK};
 }}
 
-html, body, [class*="css"]  {{
+html, body, [class*="css"] {{
     font-family: 'Segoe UI','Inter','Helvetica Neue',Arial,sans-serif;
     color: {TEXT_DARK};
 }}
 
-/* ── Hide ALL default Streamlit chrome ── */
-#MainMenu                              {{display: none !important;}}
-footer                                 {{display: none !important;}}
-header[data-testid="stHeader"]         {{display: none !important; height: 0 !important;}}
-[data-testid="stToolbar"]              {{display: none !important;}}
-[data-testid="stToolbarActions"]       {{display: none !important;}}
-[data-testid="stDecoration"]           {{display: none !important;}}
-[data-testid="stStatusWidget"]         {{display: none !important;}}
-[data-testid="stDeployButton"]         {{display: none !important;}}
-[data-testid="stActionButton"]         {{display: none !important;}}
-[data-testid="stAppViewBlockContainer"]{{padding-top: 1.2rem !important;}}
-.viewerBadge_container__1QSob          {{display: none !important;}}
-.styles_viewerBadge__1yB5_             {{display: none !important;}}
-.stAppDeployButton                     {{display: none !important;}}
-div[class*="viewerBadge"]              {{display: none !important;}}
-a[href^="#"][class*="anchor"]          {{display: none !important;}}
+/* Hide ALL default Streamlit chrome */
+#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stToolbarActions"],
+[data-testid="stDecoration"], [data-testid="stStatusWidget"],
+[data-testid="stDeployButton"], [data-testid="stActionButton"],
+.viewerBadge_container__1QSob, .styles_viewerBadge__1yB5_,
+.stAppDeployButton, div[class*="viewerBadge"],
+a[href^="#"][class*="anchor"] {{display: none !important;}}
+header[data-testid="stHeader"] {{display: none !important; height: 0 !important;}}
+[data-testid="stAppViewBlockContainer"] {{padding-top: 1.2rem !important;}}
 
 .stApp {{
     background:
@@ -118,105 +106,110 @@ a[href^="#"][class*="anchor"]          {{display: none !important;}}
         {BG_SOFT};
 }}
 
-/* ── Centered logo header ─────────────────────── */
-.nicdc-header {{
-    text-align: center;
-    margin: 4px 0 26px;
-    padding: 14px 0 6px;
-}}
-.nicdc-header .logo-wrap {{
-    display: flex;
-    justify-content: center;
-    margin-bottom: 18px;
-}}
-.nicdc-header .logo-wrap img,
-.nicdc-header .logo-wrap svg {{
-    height: 170px; width: auto; display: block;
-}}
+/* Header */
+.nicdc-header {{ text-align: center; margin: 4px 0 26px; padding: 14px 0 6px; }}
+.nicdc-header .logo-wrap {{ display: flex; justify-content: center; margin-bottom: 18px; }}
+.nicdc-header .logo-wrap img, .nicdc-header .logo-wrap svg {{ height: 170px; width: auto; display: block; }}
 .nicdc-header h1.header-title {{
-    margin: 0 auto 6px;
-    color: {LETTERHEAD};
-    font-weight: 900;
-    font-size: 28px;
-    line-height: 1.25;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    text-decoration: underline;
-    text-decoration-color: {LETTERHEAD};
-    text-decoration-thickness: 2.5px;
-    text-underline-offset: 6px;
+    margin: 0 auto 6px; color: {LETTERHEAD}; font-weight: 900; font-size: 28px;
+    line-height: 1.25; letter-spacing: 0.6px; text-transform: uppercase;
+    text-decoration: underline; text-decoration-color: {LETTERHEAD};
+    text-decoration-thickness: 2.5px; text-underline-offset: 6px;
     font-family: 'Arial Black','Helvetica Neue',Arial,sans-serif;
 }}
-.nicdc-header .page-title {{
-    margin-top: 14px;
-    color: {NAVY};
-    font-weight: 800;
-    font-size: 19px;
-    letter-spacing: 0.3px;
-}}
+.nicdc-header .page-title {{ margin-top: 14px; color: {NAVY}; font-weight: 800; font-size: 19px; letter-spacing: 0.3px; }}
 .nicdc-header .page-title .accent {{ color: {LETTERHEAD}; }}
 
-/* ── Section cards ─────────────────────────────────────────────────── */
+/* Section cards */
 .section-card {{
-    background: #FFFFFF;
-    border: 1px solid {BORDER};
-    border-left: 5px solid {SAFFRON};
-    border-radius: 12px;
-    padding: 18px 22px 4px;
-    margin-bottom: 14px;
+    background: #FFFFFF; border: 1px solid {BORDER}; border-left: 5px solid {SAFFRON};
+    border-radius: 12px; padding: 18px 22px 4px; margin-bottom: 14px;
     box-shadow: 0 1px 2px rgba(11,37,69,0.04);
 }}
-.section-card h3 {{
-    margin: 0 0 4px;
-    color: {NAVY};
-    font-size: 18px;
-    font-weight: 800;
-    letter-spacing: 0.2px;
-}}
-.section-card .section-sub {{
-    color: {TEXT_MUTED};
-    font-size: 13px;
-    margin-bottom: 12px;
-}}
+.section-card h3 {{ margin: 0 0 4px; color: {NAVY}; font-size: 18px; font-weight: 800; }}
+.section-card .section-sub {{ color: {TEXT_MUTED}; font-size: 13px; margin-bottom: 12px; }}
 
-/* ── Info callout ──────────────────────────────────────────────────── */
 .info-callout {{
-    background: #FFF5EB;
-    border-left: 4px solid {SAFFRON};
-    color: #6B3A0E;
-    padding: 10px 14px;
-    border-radius: 6px;
-    font-size: 13.5px;
-    margin: 6px 0 14px;
+    background: #FFF5EB; border-left: 4px solid {SAFFRON}; color: #6B3A0E;
+    padding: 10px 14px; border-radius: 6px; font-size: 13.5px; margin: 6px 0 14px;
 }}
 
-/* ── Inputs / labels ───────────────────────────────────────────────── */
-label, .stRadio label, .stCheckbox label {{ color: {TEXT_DARK} !important; font-weight: 600; }}
+/* ── Labels / markdown — force DARK so they show on the light theme ── */
+[data-testid="stAppViewBlockContainer"] label,
+[data-testid="stAppViewBlockContainer"] .stRadio label,
+[data-testid="stAppViewBlockContainer"] .stCheckbox label,
+[data-testid="stAppViewBlockContainer"] .stMultiSelect label,
+[data-testid="stAppViewBlockContainer"] .stSelectbox label,
+[data-testid="stAppViewBlockContainer"] .stTextInput label,
+[data-testid="stAppViewBlockContainer"] .stTextArea label,
+[data-testid="stAppViewBlockContainer"] .stNumberInput label,
+[data-testid="stAppViewBlockContainer"] .stMarkdown,
+[data-testid="stAppViewBlockContainer"] .stMarkdown p,
+[data-testid="stAppViewBlockContainer"] .stMarkdown strong,
+[data-testid="stAppViewBlockContainer"] .stMarkdown em,
+[data-testid="stAppViewBlockContainer"] [data-testid="stMarkdownContainer"] p {{
+    color: {TEXT_DARK} !important;
+    font-weight: 600 !important;
+}}
+
+/* Radio option labels (Yes / No) — dark text, white pill */
+[data-testid="stAppViewBlockContainer"] .stRadio [role="radiogroup"] {{ gap: 22px !important; }}
+[data-testid="stAppViewBlockContainer"] .stRadio [role="radiogroup"] label {{
+    background: #FFFFFF; border: 1px solid {BORDER}; border-radius: 8px;
+    padding: 6px 14px 6px 8px; transition: border-color 0.15s, box-shadow 0.15s;
+}}
+[data-testid="stAppViewBlockContainer"] .stRadio [role="radiogroup"] label:hover {{
+    border-color: {SAFFRON}; box-shadow: 0 0 0 2px rgba(232,119,34,0.12);
+}}
+[data-testid="stAppViewBlockContainer"] .stRadio [role="radiogroup"] label p,
+[data-testid="stAppViewBlockContainer"] .stRadio [role="radiogroup"] label div {{
+    color: {TEXT_DARK} !important; font-weight: 600 !important;
+}}
+/* Radio circle outline (BaseWeb) — navy 2px so it's visible on white */
+[data-testid="stAppViewBlockContainer"] .stRadio div[data-baseweb="radio"] > div:first-child,
+[data-testid="stAppViewBlockContainer"] .stRadio div[role="radio"] {{
+    border-color: {NAVY} !important; border-width: 2px !important; background: #FFFFFF !important;
+}}
+
+/* Inputs */
 .stTextInput input, .stTextArea textarea, .stNumberInput input,
 .stSelectbox div[data-baseweb="select"] > div {{
-    border-radius: 8px !important;
+    border-radius: 8px !important; color: {TEXT_DARK} !important;
 }}
+
 .stButton > button {{
     background: linear-gradient(135deg, {SAFFRON} 0%, {GOLD} 100%);
-    color: #FFFFFF;
-    border: 0;
-    border-radius: 10px;
-    padding: 10px 18px;
-    font-weight: 700;
-    letter-spacing: 0.3px;
+    color: #FFFFFF; border: 0; border-radius: 10px; padding: 10px 18px;
+    font-weight: 700; letter-spacing: 0.3px;
     box-shadow: 0 6px 14px rgba(232,119,34,0.25);
 }}
 .stButton > button:hover {{ filter: brightness(1.05); }}
 .stDownloadButton > button {{
-    background: {NAVY};
-    color: #FFFFFF;
-    border: 0;
-    border-radius: 10px;
-    padding: 8px 14px;
-    font-weight: 700;
+    background: {NAVY}; color: #FFFFFF; border: 0; border-radius: 10px;
+    padding: 8px 14px; font-weight: 700;
 }}
 
-/* ── Sidebar ───────────────────────────────────────────────────────── */
+/* Rank-question heading (dark text, visible block) */
+.rank-heading {{
+    display: block; color: {TEXT_DARK} !important; font-weight: 700; font-size: 14.5px;
+    margin: 14px 0 6px; padding: 8px 12px; background: #F8FAFD;
+    border-left: 3px solid {SAFFRON}; border-radius: 4px;
+}}
+
+/* Repeat-block helper note */
+.repeat-heading {{
+    display: block; color: {NAVY} !important; font-weight: 700; font-size: 14px;
+    margin: 8px 0 10px; padding: 6px 10px;
+    background: #FFF5EB; border-left: 3px solid {SAFFRON}; border-radius: 4px;
+}}
+
+/* Expander headers */
+.streamlit-expanderHeader, [data-testid="stExpander"] summary {{
+    background: #FFFFFF !important; color: {NAVY} !important; font-weight: 700 !important;
+    border: 1px solid {BORDER} !important; border-radius: 8px !important;
+}}
+
+/* Sidebar */
 [data-testid="stSidebar"] {{
     background: linear-gradient(180deg, {NAVY_DEEP} 0%, {NAVY} 100%);
 }}
@@ -224,46 +217,31 @@ label, .stRadio label, .stCheckbox label {{ color: {TEXT_DARK} !important; font-
 [data-testid="stSidebar"] .stRadio label {{ color: #E9EEF7 !important; }}
 [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {{ color: {SAFFRON_LT}; }}
 [data-testid="stSidebar"] .sidebar-card {{
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.10);
-    border-radius: 10px;
-    padding: 12px;
-    margin-top: 10px;
-    font-size: 12.5px;
-    line-height: 1.5;
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 10px; padding: 12px; margin-top: 10px;
+    font-size: 12.5px; line-height: 1.5;
 }}
 
-/* ── Stats / pills ─────────────────────────────────────────────────── */
+/* KPI pills */
 .kpi-row {{ display: flex; gap: 12px; flex-wrap: wrap; margin: 6px 0 14px; }}
 .kpi {{
-    background: #FFFFFF;
-    border: 1px solid {BORDER};
-    border-radius: 10px;
-    padding: 12px 16px;
-    min-width: 160px;
-    box-shadow: 0 1px 2px rgba(11,37,69,0.04);
+    background: #FFFFFF; border: 1px solid {BORDER}; border-radius: 10px;
+    padding: 12px 16px; min-width: 160px; box-shadow: 0 1px 2px rgba(11,37,69,0.04);
 }}
-.kpi .label {{ font-size: 11.5px; color: {TEXT_MUTED}; letter-spacing: 1px; text-transform: uppercase; font-weight: 700;}}
+.kpi .label {{ font-size: 11.5px; color: {TEXT_MUTED}; letter-spacing: 1px;
+    text-transform: uppercase; font-weight: 700; }}
 .kpi .value {{ font-size: 24px; color: {NAVY}; font-weight: 800; }}
 
-/* ── Success banner ───────────────────────────────────────────────── */
+/* Success banner */
 .success-banner {{
     background: linear-gradient(135deg, #E9F8F0 0%, #D7F1E2 100%);
-    border-left: 5px solid {GREEN};
-    color: #094B2B;
-    padding: 14px 18px;
-    border-radius: 10px;
-    font-weight: 600;
+    border-left: 5px solid {GREEN}; color: #094B2B;
+    padding: 14px 18px; border-radius: 10px; font-weight: 600;
 }}
 
-/* ── Footer (custom) ─────────────────────────────────────────────── */
 .nicdc-footer {{
-    margin-top: 36px;
-    padding: 14px 0;
-    border-top: 1px solid {BORDER};
-    text-align: center;
-    color: {TEXT_MUTED};
-    font-size: 12.5px;
+    margin-top: 36px; padding: 14px 0; border-top: 1px solid {BORDER};
+    text-align: center; color: {TEXT_MUTED}; font-size: 12.5px;
 }}
 .nicdc-footer strong {{ color: {NAVY}; }}
 </style>
@@ -274,16 +252,17 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 # ───────────────────────────── Helpers ─────────────────────────────
 
-def render_banner(subtitle: str = "") -> None:
-    """Centered NICDC header — logo on top, bold orange underlined wordmark below."""
-    banner_html = f"""
-    <div class="nicdc-header">
-        <div class="logo-wrap">{LOGO_HTML}</div>
-        <h1 class="header-title">National Industrial Corridor<br/>Development Corporation</h1>
-        <div class="page-title">Legacy Industrial Cluster <span class="accent">Questionnaire</span></div>
-    </div>
-    """
-    st.markdown(banner_html, unsafe_allow_html=True)
+def render_banner() -> None:
+    st.markdown(
+        f"""
+        <div class="nicdc-header">
+            <div class="logo-wrap">{LOGO_HTML}</div>
+            <h1 class="header-title">National Industrial Corridor<br/>Development Corporation</h1>
+            <div class="page-title">Legacy Industrial Cluster <span class="accent">Questionnaire</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def section_header(section: dict) -> None:
@@ -296,7 +275,6 @@ def section_header(section: dict) -> None:
 
 
 def get_admin_password() -> str:
-    """Resolve admin password from Streamlit secrets, else env var, else default."""
     try:
         if "admin_password" in st.secrets:
             return str(st.secrets["admin_password"])
@@ -314,7 +292,7 @@ def render_footer() -> None:
     st.markdown(
         f"""
         <div class="nicdc-footer">
-            © {datetime.utcnow().year} <strong>National Industrial Corridor Development Corporation Ltd.</strong>
+            © {datetime.now(timezone.utc).year} <strong>National Industrial Corridor Development Corporation Ltd.</strong>
             · Legacy Industrial Cluster Questionnaire Portal
         </div>
         """,
@@ -325,7 +303,6 @@ def render_footer() -> None:
 # ───────────────────────────── Form widgets ────────────────────────────
 
 def _render_question(q: dict, key_prefix: str, container) -> object:
-    """Render one question and return its value (or None for `info`)."""
     qid = q["id"]
     qtype = q["type"]
     key = f"{key_prefix}__{qid}"
@@ -343,12 +320,16 @@ def _render_question(q: dict, key_prefix: str, container) -> object:
         return container.text_area(label, key=key, height=height, value=st.session_state.get(key, ""))
 
     if qtype == "number":
+        step = q.get("step", 1)
+        is_float = isinstance(step, float)
+        default_min = 0.0 if is_float else 0
         return container.number_input(
             label, key=key,
-            min_value=q.get("min", 0),
+            min_value=q.get("min", default_min),
             max_value=q.get("max", None),
-            step=q.get("step", 1),
-            value=st.session_state.get(key, q.get("min", 0)),
+            step=step,
+            value=st.session_state.get(key, q.get("min", default_min)),
+            help=q.get("help"),
         )
 
     if qtype == "yesno":
@@ -363,7 +344,7 @@ def _render_question(q: dict, key_prefix: str, container) -> object:
         return container.multiselect(label, options=opts, key=key)
 
     if qtype == "rank":
-        container.markdown(f"**{label}**")
+        container.markdown(f'<div class="rank-heading">{label}</div>', unsafe_allow_html=True)
         opts = q["options"]
         chosen = container.multiselect("Select applicable challenges", options=opts, key=f"{key}__sel")
         ranks: dict = {}
@@ -382,23 +363,18 @@ def _render_question(q: dict, key_prefix: str, container) -> object:
 
 
 def _render_repeat(q: dict, section_id: str, container) -> dict:
+    """Always render `max_blocks` blocks — no Add/Remove buttons. Leave unused blank."""
     block_label = q.get("block_label", "Block")
     max_blocks = q.get("max_blocks", 3)
-    min_blocks = q.get("min_blocks", 1)
-    count_key = f"{section_id}__{q['id']}__count"
-    if count_key not in st.session_state:
-        st.session_state[count_key] = min_blocks
 
-    c1, c2, _ = container.columns([1, 1, 6])
-    if c1.button(f"➕ Add {block_label}", key=f"{count_key}__add",
-                 disabled=st.session_state[count_key] >= max_blocks):
-        st.session_state[count_key] = min(max_blocks, st.session_state[count_key] + 1)
-    if c2.button(f"➖ Remove last", key=f"{count_key}__rm",
-                 disabled=st.session_state[count_key] <= min_blocks):
-        st.session_state[count_key] = max(min_blocks, st.session_state[count_key] - 1)
+    container.markdown(
+        f'<div class="repeat-heading">Provide up to {max_blocks} entries '
+        f'— leave unused entries blank.</div>',
+        unsafe_allow_html=True,
+    )
 
     blocks_data = {}
-    for b in range(1, st.session_state[count_key] + 1):
+    for b in range(1, max_blocks + 1):
         with container.expander(f"{block_label} {b}", expanded=(b == 1)):
             block = {}
             for f in q["fields"]:
@@ -415,7 +391,7 @@ def page_form() -> None:
     render_banner()
 
     st.markdown(
-        f"""
+        """
         <div class="info-callout">
             <strong>Purpose:</strong> This survey assesses the existing ecosystem of industrial clusters —
             their contribution to employment, income generation, value addition, and overall economic development —
@@ -458,7 +434,6 @@ def page_form() -> None:
         )
 
     if submitted:
-        # Required-field validation
         missing = []
         for section in SECTIONS:
             for q in section["questions"]:
@@ -470,7 +445,6 @@ def page_form() -> None:
             st.error("Please complete the required fields:\n\n- " + "\n- ".join(missing))
             return
 
-        # Normalise sentinel select values
         for k, v in list(collected.items()):
             if v == "— Select —":
                 collected[k] = ""
@@ -517,12 +491,11 @@ def page_admin() -> None:
             )
         return
 
-    # Authenticated view
     df = list_responses()
     total = len(df)
     today = sum(
         1 for _, r in df.iterrows()
-        if str(r.get("submitted_at", "")).startswith(datetime.utcnow().strftime("%Y-%m-%d"))
+        if str(r.get("submitted_at", "")).startswith(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     )
     unique_clusters = df["cluster_name"].nunique() if total else 0
 
@@ -545,7 +518,6 @@ def page_admin() -> None:
             st.rerun()
         return
 
-    # Search + filter
     q = st.text_input("🔎 Search (cluster name, product, location, respondent)")
     df_view = df.copy()
     if q:
@@ -560,7 +532,6 @@ def page_admin() -> None:
 
     st.dataframe(df_view, use_container_width=True, hide_index=True)
 
-    # Exports
     st.markdown("### ⬇️ Export")
     full = export_dataframe()
     if not full.empty:
@@ -570,26 +541,15 @@ def page_admin() -> None:
             full.to_excel(writer, index=False, sheet_name="Responses")
         json_bytes = full.to_json(orient="records", force_ascii=False, indent=2).encode("utf-8")
 
-        ts = datetime.utcnow().strftime("%Y%m%d_%H%M")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
         c1, c2, c3 = st.columns(3)
-        c1.download_button(
-            "⬇ CSV", csv,
-            file_name=f"nicdc_responses_{ts}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-        c2.download_button(
-            "⬇ Excel", xlsx_buf.getvalue(),
-            file_name=f"nicdc_responses_{ts}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-        c3.download_button(
-            "⬇ JSON", json_bytes,
-            file_name=f"nicdc_responses_{ts}.json",
-            mime="application/json",
-            use_container_width=True,
-        )
+        c1.download_button("⬇ CSV", csv, file_name=f"nicdc_responses_{ts}.csv",
+                           mime="text/csv", use_container_width=True)
+        c2.download_button("⬇ Excel", xlsx_buf.getvalue(), file_name=f"nicdc_responses_{ts}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           use_container_width=True)
+        c3.download_button("⬇ JSON", json_bytes, file_name=f"nicdc_responses_{ts}.json",
+                           mime="application/json", use_container_width=True)
 
     st.markdown("### 🔍 Inspect / Delete a Response")
     selected_id = st.selectbox("Select response ID", options=df_view["id"].tolist())
@@ -603,14 +563,13 @@ def page_admin() -> None:
                 f"**Respondent:** {meta.get('respondent')}"
             )
 
-            # Pretty-print by section
             with st.expander("🧾 Section-wise view", expanded=True):
                 for section in SECTIONS:
                     rows = []
-                    for q in section["questions"]:
-                        if q["type"] == "info":
+                    for qq in section["questions"]:
+                        if qq["type"] == "info":
                             continue
-                        key = f"{section['id']}__{q['id']}"
+                        key = f"{section['id']}__{qq['id']}"
                         val = record["payload"].get(key, "")
                         if isinstance(val, list):
                             val = ", ".join(str(x) for x in val) or "—"
@@ -618,7 +577,7 @@ def page_admin() -> None:
                             val = json.dumps(val, ensure_ascii=False)
                         elif val in (None, ""):
                             val = "—"
-                        rows.append({"Question": q["label"], "Answer": val})
+                        rows.append({"Question": qq["label"], "Answer": str(val)})
                     if rows:
                         st.markdown(f"**{section.get('icon','')} {section['title']}**")
                         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -626,7 +585,6 @@ def page_admin() -> None:
             with st.expander("📑 Full payload (JSON)", expanded=False):
                 st.json(record["payload"])
 
-            # Per-response download
             single_json = json.dumps(record, ensure_ascii=False, indent=2, default=str).encode("utf-8")
             st.download_button(
                 f"⬇ Download response NICDC-{int(selected_id):05d} (JSON)",
@@ -652,7 +610,6 @@ def page_admin() -> None:
 def main() -> None:
     init_db()
 
-    # Sidebar — branded nav
     with st.sidebar:
         st.markdown(
             f"""
@@ -694,7 +651,7 @@ def main() -> None:
                 cluster programme team at NICDC.
             </div>
             <div style="margin-top:16px;text-align:center;font-size:11px;color:#8B97AB;">
-                v1.0 · © {datetime.utcnow().year} NICDC
+                v1.1 · © {datetime.now(timezone.utc).year} NICDC
             </div>
             """,
             unsafe_allow_html=True,
