@@ -40,10 +40,45 @@ SCOPES = [
 _LOCK = threading.Lock()
 
 
+def _normalise_private_key(pk: str) -> str:
+    """
+    Ensure the private_key string is a valid PEM block with real newlines.
+    Handles three common bad cases from TOML pasting:
+      1. Literal "\\n" (backslash-n) instead of real newlines.
+      2. Single long line with no separators at all (newlines stripped).
+      3. CRLF or extra whitespace from copy-paste.
+    """
+    if not isinstance(pk, str) or "BEGIN PRIVATE KEY" not in pk:
+        return pk
+    # Case 1: convert literal "\n" sequences into real newlines
+    if "\\n" in pk:
+        pk = pk.replace("\\n", "\n")
+    # Case 3: normalise CRLF
+    pk = pk.replace("\r\n", "\n").replace("\r", "\n")
+    # Case 2: if still no newlines inside the body, reconstruct PEM with 64-char chunks
+    if pk.count("\n") < 3:
+        try:
+            _, after_begin = pk.split("-----BEGIN PRIVATE KEY-----", 1)
+            body, _ = after_begin.split("-----END PRIVATE KEY-----", 1)
+            body = "".join(body.split())  # strip ALL whitespace
+            chunks = [body[i:i + 64] for i in range(0, len(body), 64)]
+            pk = (
+                "-----BEGIN PRIVATE KEY-----\n"
+                + "\n".join(chunks)
+                + "\n-----END PRIVATE KEY-----\n"
+            )
+        except Exception:
+            pass
+    if not pk.endswith("\n"):
+        pk += "\n"
+    return pk
+
+
 @st.cache_resource(show_spinner=False)
 def _get_worksheet():
     """Authenticate once per session and return the responses worksheet."""
     creds_dict = dict(st.secrets["gcp_service_account"])
+    creds_dict["private_key"] = _normalise_private_key(creds_dict.get("private_key", ""))
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(st.secrets["sheet_id"])
@@ -61,7 +96,7 @@ def init_db() -> None:
         if first_row != HEADERS:
             if not first_row:
                 ws.update("A1", [HEADERS])
-            # If a different header exists, leave it alone — admin can clean up
+            # If a different header exists, leave it alone — admin can clean up.
 
 
 def _next_id(ws) -> int:
@@ -74,7 +109,7 @@ def _next_id(ws) -> int:
         return 1
 
 
-def save_response(payload: dict[str, Any]) -> int:
+def save_response(payload: dict) -> int:
     init_db()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
     with _LOCK:
@@ -117,7 +152,7 @@ def list_responses() -> pd.DataFrame:
     return df
 
 
-def get_response(response_id: int) -> dict[str, Any] | None:
+def get_response(response_id: int):
     with _LOCK:
         ws = _get_worksheet()
         try:
@@ -142,7 +177,7 @@ def delete_response(response_id: int) -> None:
             records = ws.get_all_records()
         except Exception:
             return
-        # Row 1 is header, so records start at row 2 (i + 2 below)
+        # Row 1 is header, so data records start at row 2 (i + 2 below)
         for i, r in enumerate(records):
             if str(r.get("id")) == str(response_id):
                 ws.delete_rows(i + 2)
