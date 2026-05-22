@@ -320,6 +320,51 @@ components.html(
         });
         // Re-check periodically in case mutations are missed
         setInterval(update, 1500);
+
+        // ---- Aggressively kill the Streamlit Cloud share / embed popup ----
+        function hideSharePopup() {
+            try {
+                const targets = doc.querySelectorAll('div, iframe');
+                const signatures = [
+                    'Make this app public',
+                    'Emails, comma separated',
+                    'Get embed link',
+                    'Show toolbar',
+                    'Disable scrolling'
+                ];
+                for (const el of targets) {
+                    const text = (el.innerText || el.textContent || '').slice(0, 400);
+                    let hit = false;
+                    for (const sig of signatures) {
+                        if (text.indexOf(sig) !== -1) { hit = true; break; }
+                    }
+                    if (!hit) continue;
+
+                    // Walk up to the outermost fixed/absolute positioned container
+                    let target = el;
+                    let safety = 0;
+                    while (target.parentElement && target.parentElement !== doc.body && safety < 8) {
+                        const cs = doc.defaultView.getComputedStyle(target.parentElement);
+                        if (cs.position === 'fixed' || cs.position === 'absolute' || parseInt(cs.zIndex || '0') > 50) {
+                            target = target.parentElement;
+                        } else {
+                            break;
+                        }
+                        safety++;
+                    }
+                    target.style.setProperty('display', 'none', 'important');
+                    target.style.setProperty('visibility', 'hidden', 'important');
+                }
+                // Also kill any iframe pointing at share.streamlit.io
+                const iframes = doc.querySelectorAll('iframe[src*="share.streamlit.io"], iframe[src*="streamlit.app"][src*="embed"]');
+                iframes.forEach(f => f.style.setProperty('display', 'none', 'important'));
+            } catch (e) { /* swallow */ }
+        }
+        hideSharePopup();
+        setInterval(hideSharePopup, 1000);
+        new MutationObserver(hideSharePopup).observe(doc.body, {
+            childList: true, subtree: true
+        });
     })();
     </script>
     """,
