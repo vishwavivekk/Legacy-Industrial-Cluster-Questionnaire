@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from questions import SECTIONS
 from storage import (
@@ -259,6 +260,70 @@ button[kind="header"] {{
 """
 
 st.markdown(CSS, unsafe_allow_html=True)
+
+# Floating "Menu" button — appears when sidebar is collapsed so users can re-open it.
+# Injected into the parent document via JS (works across Streamlit versions).
+components.html(
+    """
+    <script>
+    (function() {
+        const doc = window.parent.document;
+        if (doc.getElementById('nicdc-floating-menu')) return;
+
+        const btn = doc.createElement('button');
+        btn.id = 'nicdc-floating-menu';
+        btn.innerHTML = '☰ Menu';
+        btn.title = 'Open navigation menu';
+        btn.style.cssText = [
+            'position:fixed','top:12px','left:12px','z-index:2147483647',
+            'background:#0B2545','color:#FFFFFF','border:none','border-radius:8px',
+            'padding:8px 14px','font-size:14px','font-weight:700','letter-spacing:0.4px',
+            'cursor:pointer','box-shadow:0 6px 14px rgba(11,37,69,0.3)',
+            "font-family:'Segoe UI',Arial,sans-serif",'display:none'
+        ].join(';');
+        btn.addEventListener('click', () => {
+            const selectors = [
+                '[data-testid="stSidebarCollapsedControl"] button',
+                '[data-testid="collapsedControl"] button',
+                '[data-testid="stSidebarCollapsedControl"]',
+                '[data-testid="collapsedControl"]',
+                '[data-testid="stSidebar"] button[kind="header"]',
+                'button[kind="header"]'
+            ];
+            for (const sel of selectors) {
+                const el = doc.querySelector(sel);
+                if (el) { el.click(); return; }
+            }
+            // Fallback: try to force the sidebar visible
+            const sb = doc.querySelector('[data-testid="stSidebar"]');
+            if (sb) {
+                sb.style.transform = 'translateX(0px)';
+                sb.style.visibility = 'visible';
+                sb.style.marginLeft = '0';
+                sb.setAttribute('aria-expanded', 'true');
+            }
+        });
+        doc.body.appendChild(btn);
+
+        const update = () => {
+            const sb = doc.querySelector('[data-testid="stSidebar"]');
+            if (!sb) { btn.style.display = 'none'; return; }
+            const collapsed = sb.getAttribute('aria-expanded') === 'false'
+                || sb.offsetWidth < 50;
+            btn.style.display = collapsed ? 'block' : 'none';
+        };
+        update();
+        new MutationObserver(update).observe(doc.body, {
+            attributes: true, subtree: true,
+            attributeFilter: ['aria-expanded','style','class','data-testid']
+        });
+        // Re-check periodically in case mutations are missed
+        setInterval(update, 1500);
+    })();
+    </script>
+    """,
+    height=0,
+)
 
 
 # ───────────────────────────── Helpers ─────────────────────────────
