@@ -111,6 +111,24 @@ div[class*="embed"][class*="dialog"],
 iframe[title*="embed"] {{display: none !important;}}
 [data-testid="stAppViewBlockContainer"] {{padding-top: 1.2rem !important;}}
 
+/* ── Lock sidebar always-open: hide collapse button + force sidebar visible ── */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {{display: none !important;}}
+[data-testid="stSidebar"] {{
+    transform: none !important;
+    margin-left: 0 !important;
+    visibility: visible !important;
+    display: flex !important;
+    min-width: 244px !important;
+    width: 244px !important;
+}}
+[data-testid="stSidebar"][aria-expanded="false"] {{
+    transform: none !important;
+    margin-left: 0 !important;
+    visibility: visible !important;
+}}
+
 .stApp {{
     background:
         radial-gradient(1100px 480px at 0% -10%, rgba(232,119,34,0.06), transparent 60%),
@@ -261,77 +279,12 @@ iframe[title*="embed"] {{display: none !important;}}
 
 st.markdown(CSS, unsafe_allow_html=True)
 
-# Floating "Menu" button — appears when sidebar is collapsed so users can re-open it.
-# Injected into the parent document via JS (works across Streamlit versions).
+# Kill Streamlit Cloud share/embed popup (no floating button — sidebar is now always open).
 components.html(
     """
     <script>
     (function() {
         const doc = window.parent.document;
-        if (doc.getElementById('nicdc-floating-menu')) return;
-
-        const btn = doc.createElement('button');
-        btn.id = 'nicdc-floating-menu';
-        btn.innerHTML = '\u203A';
-        btn.title = 'Open navigation menu';
-        btn.style.cssText = [
-            'position:fixed','top:10px','left:10px','z-index:2147483647',
-            'background:#0B2545','color:#FFFFFF','border:none','border-radius:6px',
-            'width:32px','height:32px','padding:0','font-size:20px','font-weight:700',
-            'line-height:1','cursor:pointer','box-shadow:0 3px 8px rgba(11,37,69,0.25)',
-            "font-family:'Segoe UI',Arial,sans-serif",'display:none',
-            'align-items:center','justify-content:center'
-        ].join(';');
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-
-            // Only click Streamlit's OWN sidebar collapsed-control button.
-            // Never click 'button[kind=header]' or generic header buttons —
-            // those belong to Streamlit Cloud's chrome and will navigate away.
-            const safeSelectors = [
-                '[data-testid="stSidebarCollapsedControl"] button[data-testid="stBaseButton-headerNoPadding"]',
-                '[data-testid="stSidebarCollapsedControl"] button',
-                '[data-testid="collapsedControl"] button'
-            ];
-            for (const sel of safeSelectors) {
-                const el = doc.querySelector(sel);
-                if (el && el.tagName === 'BUTTON') {
-                    el.click();
-                    return;
-                }
-            }
-
-            // Fallback: directly force the sidebar visible without clicking anything
-            const sb = doc.querySelector('[data-testid="stSidebar"]');
-            if (sb) {
-                sb.style.removeProperty('transform');
-                sb.style.removeProperty('margin-left');
-                sb.style.visibility = 'visible';
-                sb.style.display = 'flex';
-                sb.setAttribute('aria-expanded', 'true');
-                // Nudge Streamlit to recalculate layout
-                window.parent.dispatchEvent(new Event('resize'));
-            }
-        });
-        doc.body.appendChild(btn);
-
-        const update = () => {
-            const sb = doc.querySelector('[data-testid="stSidebar"]');
-            if (!sb) { btn.style.display = 'none'; return; }
-            const collapsed = sb.getAttribute('aria-expanded') === 'false'
-                || sb.offsetWidth < 50;
-            btn.style.display = collapsed ? 'flex' : 'none';
-        };
-        update();
-        new MutationObserver(update).observe(doc.body, {
-            attributes: true, subtree: true,
-            attributeFilter: ['aria-expanded','style','class','data-testid']
-        });
-        // Re-check periodically in case mutations are missed
-        setInterval(update, 1500);
-
-        // ---- Aggressively kill the Streamlit Cloud share / embed popup ----
         function hideSharePopup() {
             try {
                 const targets = doc.querySelectorAll('div, iframe');
@@ -349,32 +302,27 @@ components.html(
                         if (text.indexOf(sig) !== -1) { hit = true; break; }
                     }
                     if (!hit) continue;
-
-                    // Walk up to the outermost fixed/absolute positioned container
                     let target = el;
                     let safety = 0;
                     while (target.parentElement && target.parentElement !== doc.body && safety < 8) {
                         const cs = doc.defaultView.getComputedStyle(target.parentElement);
                         if (cs.position === 'fixed' || cs.position === 'absolute' || parseInt(cs.zIndex || '0') > 50) {
                             target = target.parentElement;
-                        } else {
-                            break;
-                        }
+                        } else { break; }
                         safety++;
                     }
                     target.style.setProperty('display', 'none', 'important');
                     target.style.setProperty('visibility', 'hidden', 'important');
                 }
-                // Also kill any iframe pointing at share.streamlit.io
                 const iframes = doc.querySelectorAll('iframe[src*="share.streamlit.io"], iframe[src*="streamlit.app"][src*="embed"]');
                 iframes.forEach(f => f.style.setProperty('display', 'none', 'important'));
             } catch (e) { /* swallow */ }
         }
         hideSharePopup();
         setInterval(hideSharePopup, 1000);
-        new MutationObserver(hideSharePopup).observe(doc.body, {
-            childList: true, subtree: true
-        });
+        if (doc.body) {
+            new MutationObserver(hideSharePopup).observe(doc.body, {childList: true, subtree: true});
+        }
     })();
     </script>
     """,
