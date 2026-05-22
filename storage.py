@@ -1,130 +1,171 @@
-"""SQLite-backed persistence layer for the questionnaire."""
+"""
+Google-Sheets-backed persistence layer.
+
+Reads / writes responses to the spreadsheet whose ID is in st.secrets["sheet_id"],
+authenticating with the service-account credentials in st.secrets["gcp_service_account"].
+
+Public API (unchanged from the SQLite version, so app.py needs no edits):
+    init_db()              - ensure header row exists
+    save_response(payload) - append row, return new id
+    list_responses()       - DataFrame of metadata
+    get_response(id)       - dict with metadata + parsed payload
+    delete_response(id)    - delete row by id
+    export_dataframe()     - wide-format DataFrame (1 column per question id)
+"""
 from __future__ import annotations
 
 import json
-import os
-import sqlite3
 import threading
-from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import streamlit as st
 
-DB_LOCK = threading.Lock()
-DB_DIR = Path(__file__).parent / "data"
-DB_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = Path(os.getenv("NICDC_DB_PATH", DB_DIR / "responses.db"))
+import gspread
+from google.oauth2.service_account import Credentials
+
+HEADERS = [
+    "id", "submitted_at",
+    "cluster_name", "cluster_product", "cluster_geo",
+    "respondent", "respondent_contact",
+    "payload_json",
+]
+
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+_LOCK = threading.Lock()
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    return conn
-
-
-@contextmanager
-def get_conn():
-    with DB_LOCK:
-        conn = _connect()
-        try:
-            yield conn
-            conn.commit()
-        finally:
-            conn.close()
+@st.cache_resource(show_spinner=False)
+def _get_worksheet():
+    """Authenticate once per session and return the responses worksheet."""
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(st.secrets["sheet_id"])
+    return sh.sheet1
 
 
 def init_db() -> None:
-    with get_conn() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS responses (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                submitted_at    TEXT    NOT NULL,
-                cluster_name    TEXT,
-                cluster_product TEXT,
-                cluster_geo     TEXT,
-                respondent      TEXT,
-                respondent_contact TEXT,
-                payload_json    TEXT    NOT NULL
-            )
-            """
-        )
+    """Ensure the header row exists (idempotent)."""
+    with _LOCK:
+        ws = _get_worksheet()
+        try:
+            first_row = ws.row_values(1)
+        except Exception:
+            first_row = []
+        if first_row != HEADERS:
+            if not first_row:
+                ws.update("A1", [HEADERS])
+            # If a different header exists, leave it alone — admin can clean up
+
+
+def _next_id(ws) -> int:
+    """Compute next response id as max(existing ids) + 1."""
+    try:
+        ids = ws.col_values(1)[1:]  # skip header row
+        nums = [int(x) for x in ids if str(x).isdigit()]
+        return (max(nums) + 1) if nums else 1
+    except Exception:
+        return 1
 
 
 def save_response(payload: dict[str, Any]) -> int:
     init_db()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
-    with get_conn() as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO responses
-                (submitted_at, cluster_name, cluster_product, cluster_geo,
-                 respondent, respondent_contact, payload_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                now,
-                str(payload.get("general__cluster_name", "")),
-                str(payload.get("general__cluster_product", "")),
-                str(payload.get("general__cluster_geo", "")),
-                str(payload.get("general__respondent", "")),
-                str(payload.get("general__respondent_contact", "")),
-                json.dumps(payload, ensure_ascii=False, default=str),
-            ),
-        )
-        return int(cur.lastrowid)
+    with _LOCK:
+        ws = _get_worksheet()
+        new_id = _next_id(ws)
+        row = [
+            new_id,
+            now,
+            str(payload.get("general__cluster_name", "")),
+            str(payload.get("general__cluster_product", "")),
+            str(payload.get("general__cluster_geo", "")),
+            str(payload.get("general__respondent", "")),
+            str(payload.get("general__respondent_contact", "")),
+            json.dumps(payload, ensure_ascii=False, default=str),
+        ]
+        ws.append_row(row, value_input_option="USER_ENTERED")
+        return int(new_id)
 
 
 def list_responses() -> pd.DataFrame:
     init_db()
-    with get_conn() as conn:
-        df = pd.read_sql_query(
-            "SELECT id, submitted_at, cluster_name, cluster_product, cluster_geo, "
-            "respondent, respondent_contact FROM responses ORDER BY id DESC",
-            conn,
-        )
+    with _LOCK:
+        ws = _get_worksheet()
+        try:
+            records = ws.get_all_records()
+        except Exception:
+            records = []
+    cols_to_show = [
+        "id", "submitted_at",
+        "cluster_name", "cluster_product", "cluster_geo",
+        "respondent", "respondent_contact",
+    ]
+    if not records:
+        return pd.DataFrame(columns=cols_to_show)
+    df = pd.DataFrame(records)
+    present = [c for c in cols_to_show if c in df.columns]
+    df = df[present]
+    if "id" in df.columns:
+        df = df.sort_values("id", ascending=False)
     return df
 
 
 def get_response(response_id: int) -> dict[str, Any] | None:
-    init_db()
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM responses WHERE id = ?", (response_id,)
-        ).fetchone()
-    if row is None:
-        return None
-    data = dict(row)
-    try:
-        data["payload"] = json.loads(data.pop("payload_json"))
-    except (json.JSONDecodeError, TypeError):
-        data["payload"] = {}
-    return data
+    with _LOCK:
+        ws = _get_worksheet()
+        try:
+            records = ws.get_all_records()
+        except Exception:
+            records = []
+    for r in records:
+        if str(r.get("id")) == str(response_id):
+            data = dict(r)
+            try:
+                data["payload"] = json.loads(data.pop("payload_json", "{}"))
+            except (json.JSONDecodeError, TypeError):
+                data["payload"] = {}
+            return data
+    return None
 
 
 def delete_response(response_id: int) -> None:
-    init_db()
-    with get_conn() as conn:
-        conn.execute("DELETE FROM responses WHERE id = ?", (response_id,))
+    with _LOCK:
+        ws = _get_worksheet()
+        try:
+            records = ws.get_all_records()
+        except Exception:
+            return
+        # Row 1 is header, so records start at row 2 (i + 2 below)
+        for i, r in enumerate(records):
+            if str(r.get("id")) == str(response_id):
+                ws.delete_rows(i + 2)
+                return
 
 
 def export_dataframe() -> pd.DataFrame:
-    """Wide-format dataframe: one row per response, one column per question id."""
+    """Wide-format: one row per response, one column per question id."""
     init_db()
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, submitted_at, payload_json FROM responses ORDER BY id"
-        ).fetchall()
-    records = []
-    for r in rows:
+    with _LOCK:
+        ws = _get_worksheet()
         try:
-            payload = json.loads(r["payload_json"])
+            records = ws.get_all_records()
+        except Exception:
+            records = []
+    if not records:
+        return pd.DataFrame()
+    rows = []
+    for r in records:
+        try:
+            payload = json.loads(r.get("payload_json", "{}"))
         except (json.JSONDecodeError, TypeError):
             payload = {}
-        # Flatten list-typed answers into pipe-separated strings for tabular export.
         flat = {}
         for k, v in payload.items():
             if isinstance(v, list):
@@ -133,13 +174,10 @@ def export_dataframe() -> pd.DataFrame:
                 flat[k] = json.dumps(v, ensure_ascii=False)
             else:
                 flat[k] = v
-        flat["id"] = r["id"]
-        flat["submitted_at"] = r["submitted_at"]
-        records.append(flat)
-    if not records:
-        return pd.DataFrame()
-    df = pd.DataFrame(records)
-    # Move id + submitted_at to the front.
+        flat["id"] = r.get("id")
+        flat["submitted_at"] = r.get("submitted_at")
+        rows.append(flat)
+    df = pd.DataFrame(rows)
     front = ["id", "submitted_at"]
     cols = front + [c for c in df.columns if c not in front]
     return df[cols]
