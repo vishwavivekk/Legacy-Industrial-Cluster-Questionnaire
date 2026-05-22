@@ -96,7 +96,18 @@ html, body, [class*="css"] {{
 .viewerBadge_container__1QSob, .styles_viewerBadge__1yB5_,
 .stAppDeployButton, div[class*="viewerBadge"],
 a[href^="#"][class*="anchor"] {{display: none !important;}}
-header[data-testid="stHeader"] {{display: none !important; height: 0 !important;}}
+/* Keep header visible but transparent, so the sidebar reopen button stays clickable */
+header[data-testid="stHeader"] {{background: transparent !important; height: auto !important;}}
+/* Force the sidebar collapse / expand toggle button to always be visible */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapseButton"],
+button[kind="header"] {{
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    z-index: 999999 !important;
+}}
 [data-testid="stAppViewBlockContainer"] {{padding-top: 1.2rem !important;}}
 
 .stApp {{
