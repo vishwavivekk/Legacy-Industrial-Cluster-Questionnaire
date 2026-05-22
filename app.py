@@ -100,18 +100,15 @@ html, body, [class*="css"] {{
 .viewerBadge_container__1QSob, .styles_viewerBadge__1yB5_,
 .stAppDeployButton, div[class*="viewerBadge"],
 a[href^="#"][class*="anchor"] {{display: none !important;}}
-/* Keep header visible but transparent, so the sidebar reopen button stays clickable */
-header[data-testid="stHeader"] {{background: transparent !important; height: auto !important;}}
-/* Force the sidebar collapse / expand toggle button to always be visible */
-[data-testid="stSidebarCollapsedControl"],
-[data-testid="collapsedControl"],
-[data-testid="stSidebarCollapseButton"],
-button[kind="header"] {{
-    display: flex !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    z-index: 999999 !important;
-}}
+/* Hide the entire Streamlit header — kills share / embed / deploy chrome.
+   The custom floating arrow button (injected via components.html below) handles re-opening the sidebar. */
+header[data-testid="stHeader"] {{display: none !important; height: 0 !important;}}
+/* Extra: kill any leaked share / embed dialog */
+[data-testid="stShareDialog"],
+div[class*="ShareDialog"],
+div[class*="shareDialog"],
+div[class*="embed"][class*="dialog"],
+iframe[title*="embed"] {{display: none !important;}}
 [data-testid="stAppViewBlockContainer"] {{padding-top: 1.2rem !important;}}
 
 .stApp {{
