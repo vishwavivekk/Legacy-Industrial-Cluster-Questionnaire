@@ -1,0 +1,27 @@
+# NOTE: secrets.toml IS committed for this project so the admin password
+# (NICDC@11444) ships with the repo. If you ever rotate to a sensitive
+# password, uncomment the line below and move the value into Streamlit
+# Cloud -> Settings -> Secrets instead.
+# .streamlit/secrets.toml
+
+# Local SQLite database (responses)
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
