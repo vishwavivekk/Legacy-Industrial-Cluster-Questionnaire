@@ -282,26 +282,36 @@ components.html(
             "font-family:'Segoe UI',Arial,sans-serif",'display:none',
             'align-items:center','justify-content:center'
         ].join(';');
-        btn.addEventListener('click', () => {
-            const selectors = [
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Only click Streamlit's OWN sidebar collapsed-control button.
+            // Never click 'button[kind=header]' or generic header buttons —
+            // those belong to Streamlit Cloud's chrome and will navigate away.
+            const safeSelectors = [
+                '[data-testid="stSidebarCollapsedControl"] button[data-testid="stBaseButton-headerNoPadding"]',
                 '[data-testid="stSidebarCollapsedControl"] button',
-                '[data-testid="collapsedControl"] button',
-                '[data-testid="stSidebarCollapsedControl"]',
-                '[data-testid="collapsedControl"]',
-                '[data-testid="stSidebar"] button[kind="header"]',
-                'button[kind="header"]'
+                '[data-testid="collapsedControl"] button'
             ];
-            for (const sel of selectors) {
+            for (const sel of safeSelectors) {
                 const el = doc.querySelector(sel);
-                if (el) { el.click(); return; }
+                if (el && el.tagName === 'BUTTON') {
+                    el.click();
+                    return;
+                }
             }
-            // Fallback: try to force the sidebar visible
+
+            // Fallback: directly force the sidebar visible without clicking anything
             const sb = doc.querySelector('[data-testid="stSidebar"]');
             if (sb) {
-                sb.style.transform = 'translateX(0px)';
+                sb.style.removeProperty('transform');
+                sb.style.removeProperty('margin-left');
                 sb.style.visibility = 'visible';
-                sb.style.marginLeft = '0';
+                sb.style.display = 'flex';
                 sb.setAttribute('aria-expanded', 'true');
+                // Nudge Streamlit to recalculate layout
+                window.parent.dispatchEvent(new Event('resize'));
             }
         });
         doc.body.appendChild(btn);
