@@ -94,6 +94,9 @@ html, body, [class*="css"] {{
 #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stToolbarActions"],
 [data-testid="stDecoration"], [data-testid="stStatusWidget"],
 [data-testid="stDeployButton"], [data-testid="stActionButton"],
+[data-testid="stMainMenuPopover"], [data-testid="stMainMenu"],
+[data-testid="stShareDialog"], [data-testid="stShareButton"],
+[data-testid="stHeaderActionElements"],
 .viewerBadge_container__1QSob, .styles_viewerBadge__1yB5_,
 .stAppDeployButton, div[class*="viewerBadge"],
 a[href^="#"][class*="anchor"] {{display: none !important;}}
@@ -272,14 +275,15 @@ components.html(
 
         const btn = doc.createElement('button');
         btn.id = 'nicdc-floating-menu';
-        btn.innerHTML = '☰ Menu';
+        btn.innerHTML = '\u203A';
         btn.title = 'Open navigation menu';
         btn.style.cssText = [
-            'position:fixed','top:12px','left:12px','z-index:2147483647',
-            'background:#0B2545','color:#FFFFFF','border:none','border-radius:8px',
-            'padding:8px 14px','font-size:14px','font-weight:700','letter-spacing:0.4px',
-            'cursor:pointer','box-shadow:0 6px 14px rgba(11,37,69,0.3)',
-            "font-family:'Segoe UI',Arial,sans-serif",'display:none'
+            'position:fixed','top:10px','left:10px','z-index:2147483647',
+            'background:#0B2545','color:#FFFFFF','border:none','border-radius:6px',
+            'width:32px','height:32px','padding:0','font-size:20px','font-weight:700',
+            'line-height:1','cursor:pointer','box-shadow:0 3px 8px rgba(11,37,69,0.25)',
+            "font-family:'Segoe UI',Arial,sans-serif",'display:none',
+            'align-items:center','justify-content:center'
         ].join(';');
         btn.addEventListener('click', () => {
             const selectors = [
@@ -310,7 +314,7 @@ components.html(
             if (!sb) { btn.style.display = 'none'; return; }
             const collapsed = sb.getAttribute('aria-expanded') === 'false'
                 || sb.offsetWidth < 50;
-            btn.style.display = collapsed ? 'block' : 'none';
+            btn.style.display = collapsed ? 'flex' : 'none';
         };
         update();
         new MutationObserver(update).observe(doc.body, {
